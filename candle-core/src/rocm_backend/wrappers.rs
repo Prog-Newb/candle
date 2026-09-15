@@ -64,7 +64,7 @@ unsafe impl Send for SendSyncPseudoRng {}
 unsafe impl Sync for SendSyncPseudoRng {}
 
 impl SendSyncPseudoRng {
-    pub fn new(rng_type: u32) -> Result<Self, rocm_rs::rocrand::error::Error> {
+    pub fn new(rng_type: i32) -> Result<Self, rocm_rs::rocrand::error::Error> {
         Ok(Self(PseudoRng::new(rng_type)?))
     }
 }
@@ -100,3 +100,4 @@ impl Deref for SendSyncMIOpenHandle {
         &self.0
     }
 }
+

@@ -218,6 +218,122 @@ fn compute_source_hash(source: &str) -> String {
     // Use first 16 characters of hex as hash
     format!("{:x}", result)[..16].to_string()
 }
+fn extract_hip_code_object(
+    bundle_file: &Path,
+    output_file: &Path,
+    arch: &str,
+) -> Result<(), KernelError> {
+    const MAGIC: &[u8] = b"__CLANG_OFFLOAD_BUNDLE__";
+
+    let data = fs::read(bundle_file).map_err(|e| {
+        KernelError::Io(format!(
+            "Failed to read HIP offload bundle {}: {}",
+            bundle_file.display(),
+            e
+        ))
+    })?;
+
+    if data.len() < 32 || &data[..MAGIC.len()] != MAGIC {
+        return Err(KernelError::Compilation(format!(
+            "Invalid HIP offload bundle in {}",
+            bundle_file.display()
+        )));
+    }
+
+    // Bundle format:
+    // 0x00  24-byte magic
+    // 0x18  u64 bundle count
+    // Each bundle:
+    //   u64 offset
+    //   u64 size
+    //   u64 identifier length
+    //   identifier bytes
+    let read_u64 = |offset: usize| -> Result<u64, KernelError> {
+        let end = offset.checked_add(8).ok_or_else(|| {
+            KernelError::Compilation("HIP bundle offset overflow".into())
+        })?;
+
+        if end > data.len() {
+            return Err(KernelError::Compilation(
+                "HIP bundle header is truncated".into(),
+            ));
+        }
+
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&data[offset..end]);
+        Ok(u64::from_le_bytes(bytes))
+    };
+
+    let bundle_count = read_u64(24)? as usize;
+    let mut cursor = 32usize;
+
+    let wanted = format!("hipv4-amdgcn-amd-amdhsa--{}", arch);
+
+    for _ in 0..bundle_count {
+        let offset = read_u64(cursor)? as usize;
+        cursor += 8;
+
+        let size = read_u64(cursor)? as usize;
+        cursor += 8;
+
+        let id_len = read_u64(cursor)? as usize;
+        cursor += 8;
+
+        let id_end = cursor.checked_add(id_len).ok_or_else(|| {
+            KernelError::Compilation("HIP bundle ID overflow".into())
+        })?;
+
+        if id_end > data.len() {
+            return Err(KernelError::Compilation(
+                "HIP bundle ID extends past file".into(),
+            ));
+        }
+
+        let id = String::from_utf8_lossy(&data[cursor..id_end]);
+        cursor = id_end;
+
+        if id == wanted {
+            let end = offset.checked_add(size).ok_or_else(|| {
+                KernelError::Compilation(
+                    "HIP code object offset overflow".into(),
+                )
+            })?;
+
+            if end > data.len() {
+                return Err(KernelError::Compilation(format!(
+                    "HIP code object for {} extends past bundle",
+                    wanted
+                )));
+            }
+
+            let code_object = &data[offset..end];
+
+            // AMDGPU code objects are ELF files.
+            if code_object.len() < 4 || &code_object[..4] != b"\x7fELF" {
+                return Err(KernelError::Compilation(format!(
+                    "HIP bundle entry {} is not an ELF code object",
+                    wanted
+                )));
+            }
+
+            fs::write(output_file, code_object).map_err(|e| {
+                KernelError::Io(format!(
+                    "Failed to write HIP code object {}: {}",
+                    output_file.display(),
+                    e
+                ))
+            })?;
+
+            return Ok(());
+        }
+    }
+
+    Err(KernelError::Compilation(format!(
+        "HIP code object {} not found in bundle",
+        wanted
+    )))
+}
+
 
 /// Compile a kernel using hipcc
 fn compile_kernel(
@@ -228,17 +344,18 @@ fn compile_kernel(
 ) -> Result<Vec<u8>, KernelError> {
     let temp_dir = std::env::temp_dir();
     let source_hash = compute_source_hash(source);
-    let source_file = temp_dir.join(format!("candle_{}_{}.hip", name, source_hash));
-    let obj_file = temp_dir.join(format!("candle_{}_{}.o", name, source_hash));
-    let fatbin_file = temp_dir.join(format!("candle_{}_{}.fatbin", name, source_hash));
-    let hsaco_file = temp_dir.join(format!("candle_{}_{}.hsaco", name, source_hash));
 
-    // Clean up temp files on any error
+    let source_file =
+        temp_dir.join(format!("candle_{}_{}.hip", name, source_hash));
+    let obj_file =
+        temp_dir.join(format!("candle_{}_{}.o", name, source_hash));
+    let hsaco_file =
+        temp_dir.join(format!("candle_{}_{}.hsaco", name, source_hash));
+
     let _cleanup = TempFileCleanup {
         files: vec![
             source_file.clone(),
             obj_file.clone(),
-            fatbin_file.clone(),
             hsaco_file.clone(),
         ],
     };
@@ -251,12 +368,17 @@ fn compile_kernel(
         ))
     })?;
 
-    // Step 1: Compile HIP to object file
+    // Step 1: Compile HIP to a device offload bundle.
+    //
+    // ROCm 7.x on Windows produces a __CLANG_OFFLOAD_BUNDLE__
+    // containing the host/device entries. We extract the
+    // gfx-specific ELF directly in Rust below.
     let output = Command::new("hipcc")
         .args(&[
+            "--cuda-device-only",
             &format!("--offload-arch={}", arch),
             "-O3",
-            "-fPIC",
+            "--rocm-path=C:\\ModModelUpscale\\.venv\\Lib\\site-packages\\_rocm_sdk_core\\lib\\llvm",
             "-c",
             "-o",
             obj_file.to_str().unwrap(),
@@ -264,74 +386,30 @@ fn compile_kernel(
         ])
         .output()
         .map_err(|e| {
-            KernelError::Compilation(format!("Failed to execute hipcc: {}. Is hipcc in PATH?", e))
+            KernelError::Compilation(format!(
+                "Failed to execute hipcc: {}",
+                e
+            ))
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+
         return Err(KernelError::Compilation(format!(
             "hipcc compilation failed for {}:\n{}",
             name, stderr
         )));
     }
 
-    // Step 2: Extract fat binary from object
-    let extract_output = Command::new("objcopy")
-        .args(&[
-            "-O",
-            "binary",
-            "-j",
-            ".hip_fatbin",
-            obj_file.to_str().unwrap(),
-            fatbin_file.to_str().unwrap(),
-        ])
-        .output()
-        .map_err(|e| {
-            KernelError::Compilation(format!(
-                "Failed to execute objcopy: {}. Is binutils in PATH?",
-                e
-            ))
-        })?;
+    // Step 2: Extract the gfx-specific ELF directly from
+    // the __CLANG_OFFLOAD_BUNDLE__ produced by hipcc.
+    extract_hip_code_object(
+        &obj_file,
+        &hsaco_file,
+        arch,
+    )?;
 
-    if !extract_output.status.success() {
-        let stderr = String::from_utf8_lossy(&extract_output.stderr);
-        return Err(KernelError::Compilation(format!(
-            "objcopy extraction failed for {}:\n{}",
-            name, stderr
-        )));
-    }
-
-    // Step 3: Unbundle the code object for specific architecture
-    let target = format!("hipv4-amdgcn-amd-amdhsa--{}", arch);
-    let bundler_path = find_rocm_tool("clang-offload-bundler")?;
-    let unbundle_output = Command::new(&bundler_path)
-        .args(&[
-            "--unbundle",
-            "--type=o",
-            "--input",
-            fatbin_file.to_str().unwrap(),
-            "--targets",
-            &target,
-            "--output",
-            hsaco_file.to_str().unwrap(),
-        ])
-        .output()
-        .map_err(|e| {
-            KernelError::Compilation(format!(
-                "Failed to execute clang-offload-bundler: {}. Is ROCm in PATH?",
-                e
-            ))
-        })?;
-
-    if !unbundle_output.status.success() {
-        let stderr = String::from_utf8_lossy(&unbundle_output.stderr);
-        return Err(KernelError::Compilation(format!(
-            "clang-offload-bundler extraction failed for {}:\n{}",
-            name, stderr
-        )));
-    }
-
-    // Read the final code object
+    // Step 3: Read the extracted ELF code object.
     let binary = fs::read(&hsaco_file).map_err(|e| {
         KernelError::Io(format!(
             "Failed to read code object {}: {}",
@@ -340,7 +418,7 @@ fn compile_kernel(
         ))
     })?;
 
-    // Write to cache location
+    // Step 4: Write the final code object to the Candle cache.
     fs::write(output_path, &binary).map_err(|e| {
         KernelError::Io(format!(
             "Failed to write cache file {}: {}",
@@ -354,18 +432,36 @@ fn compile_kernel(
 
 /// Find an ROCm tool using hipcc
 fn find_rocm_tool(tool_name: &str) -> Result<String, KernelError> {
+    if let Ok(hip_path) = std::env::var("HIP_PATH") {
+        let candidate = PathBuf::from(&hip_path)
+            .join("lib")
+            .join("llvm")
+            .join("bin")
+            .join(if cfg!(windows) {
+                format!("{}.exe", tool_name)
+            } else {
+                tool_name.to_string()
+            });
+
+        if candidate.exists() {
+            return Ok(candidate.to_string_lossy().into_owned());
+        }
+    }
+
     let output = Command::new("hipcc")
         .args(&["--print-prog-name", tool_name])
         .output()
         .map_err(|e| KernelError::Compilation(format!("Failed to run hipcc: {}", e)))?;
+
     if output.status.success() {
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !path.is_empty() && PathBuf::from(&path).exists() {
             return Ok(path);
         }
     }
+
     Err(KernelError::Compilation(format!(
-        "{} not found via hipcc. Is ROCm installed?",
+        "{} not found via HIP_PATH or hipcc. Is ROCm installed?",
         tool_name
     )))
 }
