@@ -734,7 +734,7 @@ pub struct GradStore(HashMap<TensorId, Tensor>);
 
 impl GradStore {
     /// Create a new gradient store
-    fn new() -> Self {
+    pub fn new() -> Self {
         GradStore(HashMap::new())
     }
 

@@ -178,7 +178,7 @@ impl candle::CustomOp1 for Sigmoid {
                 let out = dev.alloc::<T>(el_count)?;
 
                 unsafe {
-                    let src_ptr = src.as_ptr().add(layout.start_offset());
+                    let src_ptr = rocm_elem_offset::<T>(src.as_ptr(), layout.start_offset());
                     let out_ptr = out.as_ptr();
                     let ds_ptr: *const usize = ds
                         .as_ref()
@@ -580,7 +580,7 @@ impl candle::CustomOp1 for SoftmaxLastDim {
                         0,
                         Some(dev.stream()),
                         &mut [
-                            &(src.0.as_ptr().add(start)) as *const *mut std::ffi::c_void
+                            &(rocm_elem_offset::<T>(src.0.as_ptr(), start)) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
                             &(dst.0.as_ptr()) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
@@ -862,11 +862,11 @@ impl candle::CustomOp2 for RmsNorm {
                         0,
                         Some(dev.stream()),
                         &mut [
-                            &(src.0.as_ptr().add(src_start)) as *const *mut std::ffi::c_void
+                            &(rocm_elem_offset::<T>(src.0.as_ptr(), src_start)) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
                             &(dst.0.as_ptr()) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
-                            &(alpha.0.as_ptr().add(alpha_start)) as *const *mut std::ffi::c_void
+                            &(rocm_elem_offset::<T>(alpha.0.as_ptr(), alpha_start)) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
                             &(n_cols as i32) as *const i32 as *mut std::ffi::c_void,
                             &(block_size as i32) as *const i32 as *mut std::ffi::c_void,
@@ -1223,13 +1223,13 @@ impl candle::CustomOp3 for LayerNorm {
                         0,
                         Some(dev.stream()),
                         &mut [
-                            &(src.0.as_ptr().add(src_start)) as *const *mut std::ffi::c_void
+                            &(rocm_elem_offset::<T>(src.0.as_ptr(), src_start)) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
                             &(dst.0.as_ptr()) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
-                            &(alpha.0.as_ptr().add(alpha_start)) as *const *mut std::ffi::c_void
+                            &(rocm_elem_offset::<T>(alpha.0.as_ptr(), alpha_start)) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
-                            &(beta.0.as_ptr().add(beta_start)) as *const *mut std::ffi::c_void
+                            &(rocm_elem_offset::<T>(beta.0.as_ptr(), beta_start)) as *const *mut std::ffi::c_void
                                 as *mut std::ffi::c_void,
                             &(n_cols as i32) as *const i32 as *mut std::ffi::c_void,
                             &(block_size as i32) as *const i32 as *mut std::ffi::c_void,
@@ -1692,4 +1692,12 @@ pub fn sdpa(
             do_causal,
         },
     )
+}
+
+/// Advance a type-erased ROCm device pointer by `offset` **elements** of `T` (`as_ptr()` is a
+/// `*mut c_void`, whose `.add(n)` moves n bytes; layout start offsets are in elements).
+#[cfg(feature = "rocm")]
+#[inline]
+unsafe fn rocm_elem_offset<T>(p: *mut std::ffi::c_void, offset: usize) -> *mut std::ffi::c_void {
+    (p as *mut T).add(offset) as *mut std::ffi::c_void
 }

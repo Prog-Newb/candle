@@ -1,3 +1,4 @@
+#include <hip/hip_fp16.h>
 #ifndef __HIPCC__
 #define __device__
 #define __global__
@@ -80,6 +81,7 @@ FILL_OP(uint32_t, fill_u32)
 FILL_OP(int64_t, fill_i64)
 
 CONST_SET_OP(float, const_set_f32)
+CONST_SET_OP(__half, const_set_f16)
 CONST_SET_OP(double, const_set_f64)
 CONST_SET_OP(uint8_t, const_set_u8)
 CONST_SET_OP(uint32_t, const_set_u32)

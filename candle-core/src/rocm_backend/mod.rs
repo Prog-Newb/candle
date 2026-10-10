@@ -396,34 +396,41 @@ macro_rules! dispatch_matmul {
     }};
 }
 
+/// Advance a type-erased device pointer by `offset` **elements** of `T`. `as_ptr()` returns `*mut c_void`,
+/// on which `.add(n)` moves n *bytes*; layout start offsets are in elements.
+#[inline]
+unsafe fn elem_offset_ptr<T>(p: *mut std::ffi::c_void, offset: usize) -> *mut std::ffi::c_void {
+    (p as *mut T).add(offset) as *mut std::ffi::c_void
+}
+
 macro_rules! dispatch_miopen_conv {
     ($self:expr, $kernel:expr, $l:expr, $kernel_l:expr, $dst_el:expr, $device:expr, $handle:expr, $func:ident, $($arg:expr),* $(,)?) => {{
         let device = $device.clone();
         let slice = match (&$self.slice, &$kernel.slice) {
             (RocmStorageSlice::F32(s), RocmStorageSlice::F32(w)) => {
-                let x_ptr = unsafe { s.as_ptr().add($l.start_offset()) } as *mut _;
-                let w_ptr = unsafe { w.as_ptr().add($kernel_l.start_offset()) } as *mut _;
+                let x_ptr = unsafe { elem_offset_ptr::<f32>(s.as_ptr(), $l.start_offset()) } as *mut _;
+                let w_ptr = unsafe { elem_offset_ptr::<f32>(w.as_ptr(), $kernel_l.start_offset()) } as *mut _;
                 let o = device.alloc_zeros::<f32>($dst_el)?;
                 $func::<f32>($handle, x_ptr, w_ptr, o.as_ptr() as *mut _, $($arg),*)?;
                 RocmStorageSlice::F32(o)
             }
             (RocmStorageSlice::F16(s), RocmStorageSlice::F16(w)) => {
-                let x_ptr = unsafe { s.as_ptr().add($l.start_offset()) } as *mut _;
-                let w_ptr = unsafe { w.as_ptr().add($kernel_l.start_offset()) } as *mut _;
+                let x_ptr = unsafe { elem_offset_ptr::<f16>(s.as_ptr(), $l.start_offset()) } as *mut _;
+                let w_ptr = unsafe { elem_offset_ptr::<f16>(w.as_ptr(), $kernel_l.start_offset()) } as *mut _;
                 let o = device.alloc_zeros::<f16>($dst_el)?;
                 $func::<f16>($handle, x_ptr, w_ptr, o.as_ptr() as *mut _, $($arg),*)?;
                 RocmStorageSlice::F16(o)
             }
             (RocmStorageSlice::BF16(s), RocmStorageSlice::BF16(w)) => {
-                let x_ptr = unsafe { s.as_ptr().add($l.start_offset()) } as *mut _;
-                let w_ptr = unsafe { w.as_ptr().add($kernel_l.start_offset()) } as *mut _;
+                let x_ptr = unsafe { elem_offset_ptr::<bf16>(s.as_ptr(), $l.start_offset()) } as *mut _;
+                let w_ptr = unsafe { elem_offset_ptr::<bf16>(w.as_ptr(), $kernel_l.start_offset()) } as *mut _;
                 let o = device.alloc_zeros::<bf16>($dst_el)?;
                 $func::<bf16>($handle, x_ptr, w_ptr, o.as_ptr() as *mut _, $($arg),*)?;
                 RocmStorageSlice::BF16(o)
             }
             (RocmStorageSlice::F64(s), RocmStorageSlice::F64(w)) => {
-                let x_ptr = unsafe { s.as_ptr().add($l.start_offset()) } as *mut _;
-                let w_ptr = unsafe { w.as_ptr().add($kernel_l.start_offset()) } as *mut _;
+                let x_ptr = unsafe { elem_offset_ptr::<f64>(s.as_ptr(), $l.start_offset()) } as *mut _;
+                let w_ptr = unsafe { elem_offset_ptr::<f64>(w.as_ptr(), $kernel_l.start_offset()) } as *mut _;
                 let o = device.alloc_zeros::<f64>($dst_el)?;
                 $func::<f64>($handle, x_ptr, w_ptr, o.as_ptr() as *mut _, $($arg),*)?;
                 RocmStorageSlice::F64(o)
@@ -669,7 +676,7 @@ impl<U: crate::op::UnaryOpT> Map1 for U {
         let (grid, block) = launch_config(elem_count);
 
         unsafe {
-            let src_ptr = src.as_ptr().add(layout.start_offset());
+            let src_ptr = elem_offset_ptr::<T>(src.as_ptr(), layout.start_offset());
             let out_ptr = output.as_ptr();
             let ds_ptr: *const usize = ds
                 .as_ref()
@@ -717,8 +724,8 @@ impl<U: crate::op::BinaryOpT> Map2 for U {
         let (grid, block) = launch_config(elem_count);
 
         unsafe {
-            let lhs_ptr = lhs.as_ptr().add(lhs_l.start_offset());
-            let rhs_ptr = rhs.as_ptr().add(rhs_l.start_offset());
+            let lhs_ptr = elem_offset_ptr::<T>(lhs.as_ptr(), lhs_l.start_offset());
+            let rhs_ptr = elem_offset_ptr::<T>(rhs.as_ptr(), rhs_l.start_offset());
             let out_ptr = output.as_ptr();
             let ds_ptr: *const usize = ds
                 .as_ref()
@@ -788,7 +795,7 @@ impl Affine {
         let add_val = T::from_f64(self.1);
 
         unsafe {
-            let src_ptr = src.as_ptr().add(layout.start_offset());
+            let src_ptr = elem_offset_ptr::<T>(src.as_ptr(), layout.start_offset());
             let out_ptr = output.as_ptr();
             let ds_ptr: *const usize = ds
                 .as_ref()
@@ -858,7 +865,7 @@ impl Powf {
         let scalar_val = T::from_f64(self.0);
 
         unsafe {
-            let src_ptr = src.as_ptr().add(layout.start_offset());
+            let src_ptr = elem_offset_ptr::<T>(src.as_ptr(), layout.start_offset());
             let out_ptr = output.as_ptr();
             let ds_ptr: *const usize = ds
                 .as_ref()
@@ -927,7 +934,7 @@ impl Elu {
         let alpha_val = T::from_f64(self.0);
 
         unsafe {
-            let src_ptr = src.as_ptr().add(layout.start_offset());
+            let src_ptr = elem_offset_ptr::<T>(src.as_ptr(), layout.start_offset());
             let out_ptr = output.as_ptr();
             let ds_ptr: *const usize = ds
                 .as_ref()
@@ -1053,7 +1060,7 @@ impl FastReduce<'_> {
         let block = rocm_rs::hip::Dim3::from(block_dim as u32);
 
         unsafe {
-            let src_ptr = src.as_ptr().add(layout.start_offset());
+            let src_ptr = elem_offset_ptr::<T>(src.as_ptr(), layout.start_offset());
             let out_ptr = output.as_ptr();
             let ds_ptr = ds.as_ptr() as *const usize;
 
@@ -1137,6 +1144,118 @@ fn index_select_typed<T: Copy + Send + Sync + WithDType + 'static>(
     Ok(output)
 }
 
+fn cmp_launch<T: Copy + Send + Sync + 'static>(
+    op: CmpOp,
+    lhs: &SendSyncDeviceMemory<T>,
+    lhs_l: &Layout,
+    rhs: &SendSyncDeviceMemory<T>,
+    rhs_l: &Layout,
+    dev: &RocmDevice,
+) -> Result<RocmStorageSlice> {
+    use candle_rocm_kernels::kernel::BinaryKernel;
+
+    let shape = lhs_l.shape();
+    let dims = shape.dims();
+    let elem_count = shape.elem_count();
+
+    let name = match op {
+        CmpOp::Eq => "eq",
+        CmpOp::Ne => "ne",
+        CmpOp::Lt => "lt",
+        CmpOp::Le => "le",
+        CmpOp::Gt => "gt",
+        CmpOp::Ge => "ge",
+    };
+
+    let func_name = kernel_name::<T>(name);
+    let ds = dims_and_strides_pair(dev, lhs_l, rhs_l)?;
+    let output = dev.alloc::<u8>(elem_count)?;
+    let (grid, block) = launch_config(elem_count);
+
+    unsafe {
+        let lhs_ptr = elem_offset_ptr::<T>(lhs.as_ptr(), lhs_l.start_offset());
+        let rhs_ptr = elem_offset_ptr::<T>(rhs.as_ptr(), rhs_l.start_offset());
+        let out_ptr = output.as_ptr();
+
+        let ds_ptr: *const usize = ds
+            .as_ref()
+            .map(|d| d.as_ptr() as *const usize)
+            .unwrap_or(std::ptr::null());
+
+        launch_kernel(
+            dev,
+            BinaryKernel::NAME,
+            BinaryKernel::CODE,
+            &func_name,
+            grid,
+            block,
+            &mut [
+                &elem_count as *const usize as *mut std::ffi::c_void,
+                &dims.len() as *const usize as *mut std::ffi::c_void,
+                (&ds_ptr) as *const *const usize as *mut std::ffi::c_void,
+                (&lhs_ptr) as *const *mut std::ffi::c_void as *mut std::ffi::c_void,
+                (&rhs_ptr) as *const *mut std::ffi::c_void as *mut std::ffi::c_void,
+                (&out_ptr) as *const *mut std::ffi::c_void as *mut std::ffi::c_void,
+            ],
+        )?;
+    }
+
+    Ok(RocmStorageSlice::U8(output))
+}
+fn where_cond_launch<P: Copy + Send + Sync + 'static, T: Copy + Send + Sync + 'static>(
+    pred: &SendSyncDeviceMemory<P>,
+    pred_l: &Layout,
+    on_true: &SendSyncDeviceMemory<T>,
+    true_l: &Layout,
+    on_false: &SendSyncDeviceMemory<T>,
+    false_l: &Layout,
+    dev: &RocmDevice,
+    pred_name: &str,
+) -> Result<SendSyncDeviceMemory<T>> {
+    use candle_rocm_kernels::kernel::TernaryKernel;
+
+    let shape = pred_l.shape();
+    let dims = shape.dims();
+    let elem_count = shape.elem_count();
+
+    let func_name = kernel_name::<T>(pred_name);
+
+    let ds = dev.clone_htod(
+        &[dims, pred_l.stride(), true_l.stride(), false_l.stride()].concat()
+    )?;
+
+    let output = dev.alloc::<T>(elem_count)?;
+    let (grid, block) = launch_config(elem_count);
+
+    unsafe {
+        let pred_ptr = elem_offset_ptr::<P>(pred.as_ptr(), pred_l.start_offset());
+        let true_ptr = elem_offset_ptr::<T>(on_true.as_ptr(), true_l.start_offset());
+        let false_ptr = elem_offset_ptr::<T>(on_false.as_ptr(), false_l.start_offset());
+        let out_ptr = output.as_ptr();
+
+        let ds_ptr: *const usize = ds.as_ptr() as *const usize;
+
+        launch_kernel(
+            dev,
+            TernaryKernel::NAME,
+            TernaryKernel::CODE,
+            &func_name,
+            grid,
+            block,
+            &mut [
+                &elem_count as *const usize as *mut std::ffi::c_void,
+                &dims.len() as *const usize as *mut std::ffi::c_void,
+                (&ds_ptr) as *const *const usize as *mut std::ffi::c_void,
+                (&pred_ptr) as *const *mut std::ffi::c_void as *mut std::ffi::c_void,
+                (&true_ptr) as *const *mut std::ffi::c_void as *mut std::ffi::c_void,
+                (&false_ptr) as *const *mut std::ffi::c_void as *mut std::ffi::c_void,
+                (&out_ptr) as *const *mut std::ffi::c_void as *mut std::ffi::c_void,
+            ],
+        )?;
+    }
+
+    Ok(output)
+}
 impl BackendStorage for RocmStorage {
     type Device = RocmDevice;
 
@@ -1250,10 +1369,24 @@ impl BackendStorage for RocmStorage {
         Ok(Self { slice, device })
     }
 
-    fn cmp(&self, _op: CmpOp, _rhs: &Self, _l1: &Layout, _l2: &Layout) -> Result<Self> {
-        Err(crate::Error::Msg(
-            "cmp not yet implemented for ROCm".to_string(),
-        ))
+    fn cmp(&self, op: CmpOp, rhs: &Self, lhs_l: &Layout, rhs_l: &Layout) -> Result<Self> {
+        let device = self.device.clone();
+        let slice = match (&self.slice, &rhs.slice) {
+            (RocmStorageSlice::F16(lhs),  RocmStorageSlice::F16(rhs))  =>
+                cmp_launch(op, lhs, lhs_l, rhs, rhs_l, &device)?,
+            (RocmStorageSlice::F32(lhs),  RocmStorageSlice::F32(rhs))  =>
+                cmp_launch(op, lhs, lhs_l, rhs, rhs_l, &device)?,
+            (RocmStorageSlice::F64(lhs),  RocmStorageSlice::F64(rhs))  =>
+                cmp_launch(op, lhs, lhs_l, rhs, rhs_l, &device)?,
+            (RocmStorageSlice::U8(lhs),   RocmStorageSlice::U8(rhs))   =>
+                cmp_launch(op, lhs, lhs_l, rhs, rhs_l, &device)?,
+            (RocmStorageSlice::U32(lhs),  RocmStorageSlice::U32(rhs))  =>
+                cmp_launch(op, lhs, lhs_l, rhs, rhs_l, &device)?,
+            (RocmStorageSlice::I64(lhs),  RocmStorageSlice::I64(rhs))  =>
+                cmp_launch(op, lhs, lhs_l, rhs, rhs_l, &device)?,
+            _ => crate::bail!("ROCm cmp: unsupported dtype combination"),
+        };
+        Ok(Self { slice, device })
     }
 
     fn to_dtype(&self, layout: &Layout, dtype: DType) -> Result<Self> {
@@ -1388,15 +1521,109 @@ impl BackendStorage for RocmStorage {
 
     fn where_cond(
         &self,
-        _l: &Layout,
-        _a: &Self,
-        _la: &Layout,
-        _b: &Self,
-        _lb: &Layout,
+        layout: &Layout,
+        t: &Self,
+        t_l: &Layout,
+        f: &Self,
+        f_l: &Layout,
     ) -> Result<Self> {
-        Err(crate::Error::Msg(
-            "where_cond not yet implemented for ROCm".to_string(),
-        ))
+        let device = self.device.clone();
+
+        let slice = match (&self.slice, &t.slice, &f.slice) {
+            (RocmStorageSlice::U8(pred), RocmStorageSlice::F16(a), RocmStorageSlice::F16(b)) =>
+                RocmStorageSlice::F16(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u8"
+                )?),
+
+            (RocmStorageSlice::U8(pred), RocmStorageSlice::F32(a), RocmStorageSlice::F32(b)) =>
+                RocmStorageSlice::F32(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u8"
+                )?),
+
+            (RocmStorageSlice::U8(pred), RocmStorageSlice::F64(a), RocmStorageSlice::F64(b)) =>
+                RocmStorageSlice::F64(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u8"
+                )?),
+
+            (RocmStorageSlice::U8(pred), RocmStorageSlice::U8(a), RocmStorageSlice::U8(b)) =>
+                RocmStorageSlice::U8(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u8"
+                )?),
+
+            (RocmStorageSlice::U8(pred), RocmStorageSlice::U32(a), RocmStorageSlice::U32(b)) =>
+                RocmStorageSlice::U32(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u8"
+                )?),
+
+            (RocmStorageSlice::U8(pred), RocmStorageSlice::I64(a), RocmStorageSlice::I64(b)) =>
+                RocmStorageSlice::I64(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u8"
+                )?),
+
+            (RocmStorageSlice::U32(pred), RocmStorageSlice::F16(a), RocmStorageSlice::F16(b)) =>
+                RocmStorageSlice::F16(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u32"
+                )?),
+
+            (RocmStorageSlice::U32(pred), RocmStorageSlice::F32(a), RocmStorageSlice::F32(b)) =>
+                RocmStorageSlice::F32(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u32"
+                )?),
+
+            (RocmStorageSlice::U32(pred), RocmStorageSlice::F64(a), RocmStorageSlice::F64(b)) =>
+                RocmStorageSlice::F64(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u32"
+                )?),
+
+            (RocmStorageSlice::U32(pred), RocmStorageSlice::U8(a), RocmStorageSlice::U8(b)) =>
+                RocmStorageSlice::U8(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u32"
+                )?),
+
+            (RocmStorageSlice::U32(pred), RocmStorageSlice::U32(a), RocmStorageSlice::U32(b)) =>
+                RocmStorageSlice::U32(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u32"
+                )?),
+
+            (RocmStorageSlice::U32(pred), RocmStorageSlice::I64(a), RocmStorageSlice::I64(b)) =>
+                RocmStorageSlice::I64(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_u32"
+                )?),
+
+            (RocmStorageSlice::I64(pred), RocmStorageSlice::F16(a), RocmStorageSlice::F16(b)) =>
+                RocmStorageSlice::F16(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_i64"
+                )?),
+
+            (RocmStorageSlice::I64(pred), RocmStorageSlice::F32(a), RocmStorageSlice::F32(b)) =>
+                RocmStorageSlice::F32(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_i64"
+                )?),
+
+            (RocmStorageSlice::I64(pred), RocmStorageSlice::F64(a), RocmStorageSlice::F64(b)) =>
+                RocmStorageSlice::F64(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_i64"
+                )?),
+
+            (RocmStorageSlice::I64(pred), RocmStorageSlice::U8(a), RocmStorageSlice::U8(b)) =>
+                RocmStorageSlice::U8(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_i64"
+                )?),
+
+            (RocmStorageSlice::I64(pred), RocmStorageSlice::U32(a), RocmStorageSlice::U32(b)) =>
+                RocmStorageSlice::U32(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_i64"
+                )?),
+
+            (RocmStorageSlice::I64(pred), RocmStorageSlice::I64(a), RocmStorageSlice::I64(b)) =>
+                RocmStorageSlice::I64(where_cond_launch(
+                    pred, layout, a, t_l, b, f_l, &device, "where_i64"
+                )?),
+
+            _ => crate::bail!("ROCm where_cond: unsupported dtype combination"),
+        };
+
+        Ok(Self { slice, device })
     }
 
     fn conv1d(
@@ -1482,6 +1709,32 @@ impl BackendStorage for RocmStorage {
         params: &crate::conv::ParamsConv2D,
     ) -> Result<Self> {
         use crate::rocm_backend::miopen::conv2d_forward;
+        // MIOpen is given a raw pointer plus dense NCHW/OIHW shapes and cannot honour strides, so any
+        // non-contiguous input/kernel is first materialised densely (contiguous views with a start offset
+        // are handled by `elem_offset_ptr` in `dispatch_miopen_conv!`).
+        use crate::backend::BackendDevice;
+        let x_dense;
+        let x_dense_l;
+        let (x_store, l) = if l.contiguous_offsets().is_some() {
+            (self, l)
+        } else {
+            let mut dst = unsafe { self.device.alloc_uninit(l.shape(), self.dtype())? };
+            self.copy_strided_src(&mut dst, 0, l)?;
+            x_dense = dst;
+            x_dense_l = Layout::contiguous(l.shape().clone());
+            (&x_dense, &x_dense_l)
+        };
+        let k_dense;
+        let k_dense_l;
+        let (kernel, kernel_l) = if kernel_l.contiguous_offsets().is_some() {
+            (kernel, kernel_l)
+        } else {
+            let mut dst = unsafe { kernel.device.alloc_uninit(kernel_l.shape(), kernel.dtype())? };
+            kernel.copy_strided_src(&mut dst, 0, kernel_l)?;
+            k_dense = dst;
+            k_dense_l = Layout::contiguous(kernel_l.shape().clone());
+            (&k_dense, &k_dense_l)
+        };
 
         let device = self.device();
         let miopen_handle = device.miopen();
@@ -1490,7 +1743,7 @@ impl BackendStorage for RocmStorage {
         let dst_el = params.b_size * params.c_out * out_h * out_w;
 
         dispatch_miopen_conv!(
-            self,
+            x_store,
             kernel,
             l,
             kernel_l,
@@ -1617,11 +1870,11 @@ impl BackendStorage for RocmStorage {
         };
 
         let (ids_prefix, ids_ptr) = match &idx.slice {
-            RocmStorageSlice::U32(s) => ("is_u32", unsafe { s.as_ptr().add(ids_l.start_offset()) }
+            RocmStorageSlice::U32(s) => ("is_u32", unsafe { elem_offset_ptr::<u32>(s.as_ptr(), ids_l.start_offset()) }
                 as *mut std::ffi::c_void),
-            RocmStorageSlice::U8(s) => ("is_u8", unsafe { s.as_ptr().add(ids_l.start_offset()) }
+            RocmStorageSlice::U8(s) => ("is_u8", unsafe { elem_offset_ptr::<u8>(s.as_ptr(), ids_l.start_offset()) }
                 as *mut std::ffi::c_void),
-            RocmStorageSlice::I64(s) => ("is_i64", unsafe { s.as_ptr().add(ids_l.start_offset()) }
+            RocmStorageSlice::I64(s) => ("is_i64", unsafe { elem_offset_ptr::<i64>(s.as_ptr(), ids_l.start_offset()) }
                 as *mut std::ffi::c_void),
             _ => crate::bail!("index_select ids should be u8, u32, or i64"),
         };
@@ -1835,8 +2088,8 @@ impl BackendStorage for RocmStorage {
                 let func_name = format!("ucopy_{}", $suffix);
                 let (src_ptr, dst_ptr) = unsafe {
                     (
-                        src_mem.as_ptr().add(src_l.start_offset()),
-                        dst_mem.as_ptr().add(dst_offset),
+                        elem_offset_ptr::<$ty>(src_mem.as_ptr(), src_l.start_offset()),
+                        elem_offset_ptr::<$ty>(dst_mem.as_ptr(), dst_offset),
                     )
                 };
                 let ds_ptr: *const usize = ds
@@ -1949,7 +2202,7 @@ impl BackendStorage for RocmStorage {
                     _ => crate::bail!("dtype mismatch in const_set"),
                 };
                 let func_name = format!("const_set_{}", $suffix);
-                let out_ptr = unsafe { mem.as_ptr().add(layout.start_offset()) };
+                let out_ptr = unsafe { elem_offset_ptr::<$ty>(mem.as_ptr(), layout.start_offset()) };
                 let scalar_val: $ty = $val;
                 let ds_ptr: *const usize = ds
                     .as_ref()

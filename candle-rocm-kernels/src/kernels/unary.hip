@@ -1,3 +1,4 @@
+#include <hip/hip_fp16.h>
 #ifndef __HIPCC__
 #define __device__
 #define __global__
@@ -90,6 +91,7 @@ extern "C" __global__ void FN_NAME( \
 }
 
 UNARY_OP(float, ucopy_f32, x)
+UNARY_OP(__half, ucopy_f16, x)
 UNARY_OP(double, ucopy_f64, x)
 UNARY_OP(uint8_t, ucopy_u8, x)
 UNARY_OP(uint32_t, ucopy_u32, x)
@@ -105,6 +107,7 @@ UNARY_OP(float, utan_f32, tanhf(x))
 UNARY_OP(double, utan_f64, tanh(x))
 
 UNARY_OP(float, uexp_f32, expf(x))
+UNARY_OP(__half, uexp_f16, hexp(x))
 UNARY_OP(double, uexp_f64, exp(x))
 
 UNARY_OP(float, ulog_f32, logf(x))
@@ -124,10 +127,12 @@ UNARY_OP(double, uabs_f64, fabs(x))
 UNARY_OP(int64_t, uabs_i64, (x < 0 ? -x : x))
 
 UNARY_OP(float, uneg_f32, -x)
+UNARY_OP(__half, uneg_f16, -x)
 UNARY_OP(double, uneg_f64, -x)
 UNARY_OP(int64_t, uneg_i64, -x)
 
 UNARY_OP(float, urecip_f32, (1.0f / x))
+UNARY_OP(__half, urecip_f16, ((__half)(1.0f) / x))
 UNARY_OP(double, urecip_f64, (1.0 / x))
 
 UNARY_OP(float, ufloor_f32, floorf(x))

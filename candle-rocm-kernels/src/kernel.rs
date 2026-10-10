@@ -18,6 +18,13 @@ impl KernelSource for BinaryKernel {
     const CODE: &'static str = include_str!("kernels/binary.hip");
 }
 
+
+/// Ternary where/selection kernel source
+pub struct TernaryKernel;
+impl KernelSource for TernaryKernel {
+    const NAME: &'static str = "ternary";
+    const CODE: &'static str = include_str!("kernels/ternary.hip");
+}
 /// Unary operations kernel source
 pub struct UnaryKernel;
 impl KernelSource for UnaryKernel {
