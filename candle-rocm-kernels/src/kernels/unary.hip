@@ -1,4 +1,5 @@
 #include <hip/hip_fp16.h>
+#include <hip/hip_bfloat16.h>
 #ifndef __HIPCC__
 #define __device__
 #define __global__
@@ -91,6 +92,7 @@ extern "C" __global__ void FN_NAME( \
 }
 
 UNARY_OP(float, ucopy_f32, x)
+UNARY_OP(hip_bfloat16, ucopy_bf16, x)
 UNARY_OP(__half, ucopy_f16, x)
 UNARY_OP(double, ucopy_f64, x)
 UNARY_OP(uint8_t, ucopy_u8, x)

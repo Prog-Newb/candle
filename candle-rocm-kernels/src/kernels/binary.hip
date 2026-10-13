@@ -1,4 +1,5 @@
 #include <hip/hip_fp16.h>
+#include <hip/hip_bfloat16.h>
 // ROCm/HIP binary operation kernels
 // These are embedded as strings and compiled at runtime
 
@@ -211,6 +212,7 @@ CMP_OP(int64_t, ge_i64, x >= y)
 // badd kernels
 BINARY_OP(float, badd_f32, x + y)
 BINARY_OP(__half, badd_f16, x + y)
+BINARY_OP(hip_bfloat16, badd_bf16, x + y)
 BINARY_OP(double, badd_f64, x + y)
 BINARY_OP(uint8_t, badd_u8, x + y)
 BINARY_OP(uint32_t, badd_u32, x + y)
@@ -219,6 +221,7 @@ BINARY_OP(int64_t, badd_i64, x + y)
 // bdiv kernels
 BINARY_OP(float, bdiv_f32, x / y)
 BINARY_OP(__half, bdiv_f16, x / y)
+BINARY_OP(hip_bfloat16, bdiv_bf16, x / y)
 BINARY_OP(double, bdiv_f64, x / y)
 BINARY_OP(uint8_t, bdiv_u8, x / y)
 BINARY_OP(uint32_t, bdiv_u32, x / y)
@@ -227,6 +230,7 @@ BINARY_OP(int64_t, bdiv_i64, x / y)
 // bmul kernels
 BINARY_OP(float, bmul_f32, x * y)
 BINARY_OP(__half, bmul_f16, x * y)
+BINARY_OP(hip_bfloat16, bmul_bf16, x * y)
 BINARY_OP(double, bmul_f64, x * y)
 BINARY_OP(uint8_t, bmul_u8, x * y)
 BINARY_OP(uint32_t, bmul_u32, x * y)
@@ -235,6 +239,7 @@ BINARY_OP(int64_t, bmul_i64, x * y)
 // bsub kernels
 BINARY_OP(float, bsub_f32, x - y)
 BINARY_OP(__half, bsub_f16, x - y)
+BINARY_OP(hip_bfloat16, bsub_bf16, x - y)
 BINARY_OP(double, bsub_f64, x - y)
 BINARY_OP(uint8_t, bsub_u8, x - y)
 BINARY_OP(uint32_t, bsub_u32, x - y)

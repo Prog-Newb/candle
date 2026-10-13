@@ -135,6 +135,12 @@ fn detect_gpu_arch(_device: &Device) -> Result<String, KernelError> {
         return Ok(arch);
     }
 
+    // The app sidecar may launch outside the build shell; preserve the architecture selected
+    // for this ROCm build.
+    if let Some(arch) = option_env!("CANDLE_ROCM_ARCH") {
+        return Ok(arch.to_owned());
+    }
+
     // Try to use rocminfo to detect the architecture
     match Command::new("rocminfo").arg("-a").output() {
         Ok(output) => {
@@ -373,12 +379,43 @@ fn compile_kernel(
     // ROCm 7.x on Windows produces a __CLANG_OFFLOAD_BUNDLE__
     // containing the host/device entries. We extract the
     // gfx-specific ELF directly in Rust below.
+    let rocm_path = std::env::var("HIP_PATH")
+        .ok()
+        .or_else(|| option_env!("HIP_PATH").map(str::to_owned))
+        .or_else(|| std::env::var("ROCM_PATH").ok())
+        .or_else(|| option_env!("ROCM_PATH").map(str::to_owned))
+        .ok_or_else(|| {
+            KernelError::Compilation(
+                "HIP_PATH or ROCM_PATH must identify the ROCm SDK root".to_owned(),
+            )
+        })?;
+    let rocm_device_lib_path = std::env::var("HIP_PATH")
+        .ok()
+        .or_else(|| option_env!("HIP_PATH").map(str::to_owned))
+        .or_else(|| std::env::var("ROCM_PATH").ok())
+        .or_else(|| option_env!("ROCM_PATH").map(str::to_owned))
+        .map(|root| {
+            PathBuf::from(root)
+                .join("lib")
+                .join("llvm")
+                .join("amdgcn")
+                .join("bitcode")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .ok_or_else(|| {
+            KernelError::Compilation(
+                "ROCM_PATH or HIP_PATH must identify the ROCm SDK root".to_owned(),
+            )
+        })?;
+
     let output = Command::new("hipcc")
         .args(&[
             "--cuda-device-only",
             &format!("--offload-arch={}", arch),
             "-O3",
-            "--rocm-path=C:\\ModModelUpscale\\.venv\\Lib\\site-packages\\_rocm_sdk_core\\lib\\llvm",
+            &format!("--rocm-path={rocm_path}"),
+            &format!("--rocm-device-lib-path={rocm_device_lib_path}"),
             "-c",
             "-o",
             obj_file.to_str().unwrap(),
