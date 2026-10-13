@@ -1,4 +1,5 @@
 #include <hip/hip_fp16.h>
+#include <hip/hip_bfloat16.h>
 #ifndef __HIPCC__
 #define __device__
 #define __global__
@@ -66,9 +67,37 @@ extern "C" __global__ void FN_NAME( \
     } \
 }
 
+/* bf16 variant goes through float because hip_bfloat16 arithmetic
+   operator availability is not guaranteed across ROCm versions. */
+#define AFFINE_OP_BF16(FN_NAME) \
+extern "C" __global__ void FN_NAME( \
+    const size_t numel, \
+    const size_t num_dims, \
+    const size_t *info, \
+    const hip_bfloat16 *inp, \
+    hip_bfloat16 *out, \
+    const hip_bfloat16 mul, \
+    const hip_bfloat16 add \
+) { \
+    const float m = (float)mul; \
+    const float a = (float)add; \
+    if (info == nullptr || is_contiguous(num_dims, info, info + num_dims)) { \
+        for (unsigned int i = blockIdx.x * blockDim.x + threadIdx.x; i < numel; i += blockDim.x * gridDim.x) { \
+            out[i] = (hip_bfloat16)((float)inp[i] * m + a); \
+        } \
+    } else { \
+        const size_t *strides = info + num_dims; \
+        for (unsigned int i = blockIdx.x * blockDim.x + threadIdx.x; i < numel; i += blockDim.x * gridDim.x) { \
+            unsigned int src_i = get_strided_index(i, num_dims, info, strides); \
+            out[i] = (hip_bfloat16)((float)inp[src_i] * m + a); \
+        } \
+    } \
+}
+
 AFFINE_OP(float, affine_f32)
 AFFINE_OP(__half, affine_f16)
 AFFINE_OP(double, affine_f64)
 AFFINE_OP(uint8_t, affine_u8)
 AFFINE_OP(uint32_t, affine_u32)
 AFFINE_OP(int64_t, affine_i64)
+AFFINE_OP_BF16(affine_bf16)

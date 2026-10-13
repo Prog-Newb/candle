@@ -1,4 +1,5 @@
-﻿#include <hip/hip_fp16.h>
+#include <hip/hip_fp16.h>
+#include <hip/hip_bfloat16.h>
 #include <hip/hip_runtime.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -62,23 +63,26 @@ extern "C" __global__ void FN_NAME( \
 
 /* CUDA-compatible predicate types, with ROCm value types already supported. */
 
-WHERE_OP(uint8_t,  __half,  where_u8_f16)
-WHERE_OP(uint8_t,  float,   where_u8_f32)
-WHERE_OP(uint8_t,  double,  where_u8_f64)
-WHERE_OP(uint8_t,  uint8_t, where_u8_u8)
-WHERE_OP(uint8_t,  uint32_t,where_u8_u32)
-WHERE_OP(uint8_t,  int64_t, where_u8_i64)
+WHERE_OP(uint8_t,  __half,       where_u8_f16)
+WHERE_OP(uint8_t,  hip_bfloat16, where_u8_bf16)
+WHERE_OP(uint8_t,  float,        where_u8_f32)
+WHERE_OP(uint8_t,  double,       where_u8_f64)
+WHERE_OP(uint8_t,  uint8_t,      where_u8_u8)
+WHERE_OP(uint8_t,  uint32_t,     where_u8_u32)
+WHERE_OP(uint8_t,  int64_t,      where_u8_i64)
 
-WHERE_OP(uint32_t, __half,  where_u32_f16)
-WHERE_OP(uint32_t, float,   where_u32_f32)
-WHERE_OP(uint32_t, double,  where_u32_f64)
-WHERE_OP(uint32_t, uint8_t, where_u32_u8)
-WHERE_OP(uint32_t, uint32_t,where_u32_u32)
-WHERE_OP(uint32_t, int64_t, where_u32_i64)
+WHERE_OP(uint32_t, __half,       where_u32_f16)
+WHERE_OP(uint32_t, hip_bfloat16, where_u32_bf16)
+WHERE_OP(uint32_t, float,        where_u32_f32)
+WHERE_OP(uint32_t, double,       where_u32_f64)
+WHERE_OP(uint32_t, uint8_t,      where_u32_u8)
+WHERE_OP(uint32_t, uint32_t,     where_u32_u32)
+WHERE_OP(uint32_t, int64_t,      where_u32_i64)
 
-WHERE_OP(int64_t,  __half,  where_i64_f16)
-WHERE_OP(int64_t,  float,   where_i64_f32)
-WHERE_OP(int64_t,  double,  where_i64_f64)
-WHERE_OP(int64_t,  uint8_t, where_i64_u8)
-WHERE_OP(int64_t,  uint32_t,where_i64_u32)
-WHERE_OP(int64_t,  int64_t, where_i64_i64)
+WHERE_OP(int64_t,  __half,       where_i64_f16)
+WHERE_OP(int64_t,  hip_bfloat16, where_i64_bf16)
+WHERE_OP(int64_t,  float,        where_i64_f32)
+WHERE_OP(int64_t,  double,       where_i64_f64)
+WHERE_OP(int64_t,  uint8_t,      where_i64_u8)
+WHERE_OP(int64_t,  uint32_t,     where_i64_u32)
+WHERE_OP(int64_t,  int64_t,      where_i64_i64)

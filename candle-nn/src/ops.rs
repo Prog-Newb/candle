@@ -599,6 +599,9 @@ impl candle::CustomOp1 for SoftmaxLastDim {
             candle::rocm_backend::RocmStorageSlice::F16(s) => {
                 candle::rocm_backend::RocmStorageSlice::F16(S.f(s, dev, layout)?)
             }
+            candle::rocm_backend::RocmStorageSlice::BF16(s) => {
+                candle::rocm_backend::RocmStorageSlice::BF16(S.f(s, dev, layout)?)
+            }
             candle::rocm_backend::RocmStorageSlice::F32(s) => {
                 candle::rocm_backend::RocmStorageSlice::F32(S.f(s, dev, layout)?)
             }
@@ -886,6 +889,12 @@ impl candle::CustomOp2 for RmsNorm {
                 candle::rocm_backend::RocmStorageSlice::F16(s),
                 candle::rocm_backend::RocmStorageSlice::F16(a),
             ) => candle::rocm_backend::RocmStorageSlice::F16(
+                S { eps: self.eps }.f(s, l1, a, l2, dev)?,
+            ),
+            (
+                candle::rocm_backend::RocmStorageSlice::BF16(s),
+                candle::rocm_backend::RocmStorageSlice::BF16(a),
+            ) => candle::rocm_backend::RocmStorageSlice::BF16(
                 S { eps: self.eps }.f(s, l1, a, l2, dev)?,
             ),
             (
@@ -1250,6 +1259,13 @@ impl candle::CustomOp3 for LayerNorm {
                 candle::rocm_backend::RocmStorageSlice::F16(a),
                 candle::rocm_backend::RocmStorageSlice::F16(b),
             ) => candle::rocm_backend::RocmStorageSlice::F16(
+                S { eps: self.eps }.f(s, l1, a, l2, b, l3, dev)?,
+            ),
+            (
+                candle::rocm_backend::RocmStorageSlice::BF16(s),
+                candle::rocm_backend::RocmStorageSlice::BF16(a),
+                candle::rocm_backend::RocmStorageSlice::BF16(b),
+            ) => candle::rocm_backend::RocmStorageSlice::BF16(
                 S { eps: self.eps }.f(s, l1, a, l2, b, l3, dev)?,
             ),
             (

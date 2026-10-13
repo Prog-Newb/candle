@@ -101,71 +101,93 @@ UNARY_OP(int64_t, ucopy_i64, x)
 
 UNARY_OP(float, urelu_f32, (x > 0.0f ? x : 0.0f))
 UNARY_OP(double, urelu_f64, (x > 0.0 ? x : 0.0))
+UNARY_OP(hip_bfloat16, urelu_bf16, (hip_bfloat16)((float)x > 0.0f ? (float)x : 0.0f))
 
 UNARY_OP(float, usigmoid_f32, (1.0f / (1.0f + expf(-x))))
 UNARY_OP(double, usigmoid_f64, (1.0 / (1.0 + exp(-x))))
+UNARY_OP(hip_bfloat16, usigmoid_bf16, (hip_bfloat16)(1.0f / (1.0f + expf(-(float)x))))
 
 UNARY_OP(float, utan_f32, tanhf(x))
 UNARY_OP(double, utan_f64, tanh(x))
+UNARY_OP(hip_bfloat16, utan_bf16, (hip_bfloat16)(tanhf((float)x)))
 
 UNARY_OP(float, uexp_f32, expf(x))
 UNARY_OP(__half, uexp_f16, hexp(x))
 UNARY_OP(double, uexp_f64, exp(x))
+UNARY_OP(hip_bfloat16, uexp_bf16, (hip_bfloat16)(expf((float)x)))
 
 UNARY_OP(float, ulog_f32, logf(x))
 UNARY_OP(double, ulog_f64, log(x))
+UNARY_OP(hip_bfloat16, ulog_bf16, (hip_bfloat16)(logf((float)x)))
 
 UNARY_OP(float, usin_f32, sinf(x))
 UNARY_OP(double, usin_f64, sin(x))
+UNARY_OP(hip_bfloat16, usin_bf16, (hip_bfloat16)(sinf((float)x)))
 
 UNARY_OP(float, ucos_f32, cosf(x))
 UNARY_OP(double, ucos_f64, cos(x))
+UNARY_OP(hip_bfloat16, ucos_bf16, (hip_bfloat16)(cosf((float)x)))
 
 UNARY_OP(float, usqrt_f32, sqrtf(x))
 UNARY_OP(double, usqrt_f64, sqrt(x))
+UNARY_OP(hip_bfloat16, usqrt_bf16, (hip_bfloat16)(sqrtf((float)x)))
 
 UNARY_OP(float, uabs_f32, fabsf(x))
 UNARY_OP(double, uabs_f64, fabs(x))
 UNARY_OP(int64_t, uabs_i64, (x < 0 ? -x : x))
+UNARY_OP(hip_bfloat16, uabs_bf16, (hip_bfloat16)(fabsf((float)x)))
 
 UNARY_OP(float, uneg_f32, -x)
 UNARY_OP(__half, uneg_f16, -x)
 UNARY_OP(double, uneg_f64, -x)
 UNARY_OP(int64_t, uneg_i64, -x)
+UNARY_OP(hip_bfloat16, uneg_bf16, (hip_bfloat16)(-(float)x))
 
 UNARY_OP(float, urecip_f32, (1.0f / x))
 UNARY_OP(__half, urecip_f16, ((__half)(1.0f) / x))
 UNARY_OP(double, urecip_f64, (1.0 / x))
+UNARY_OP(hip_bfloat16, urecip_bf16, (hip_bfloat16)(1.0f / (float)x))
 
 UNARY_OP(float, ufloor_f32, floorf(x))
 UNARY_OP(double, ufloor_f64, floor(x))
+UNARY_OP(hip_bfloat16, ufloor_bf16, (hip_bfloat16)(floorf((float)x)))
 
 UNARY_OP(float, uceil_f32, ceilf(x))
 UNARY_OP(double, uceil_f64, ceil(x))
+UNARY_OP(hip_bfloat16, uceil_bf16, (hip_bfloat16)(ceilf((float)x)))
 
 UNARY_OP(float, uround_f32, roundf(x))
 UNARY_OP(double, uround_f64, round(x))
+UNARY_OP(hip_bfloat16, uround_bf16, (hip_bfloat16)(roundf((float)x)))
 
 UNARY_OP(float, usqr_f32, (x * x))
 UNARY_OP(double, usqr_f64, (x * x))
+UNARY_OP(hip_bfloat16, usqr_bf16, (hip_bfloat16)((float)x * (float)x))
 
 UNARY_OP(float, usign_f32, (x > 0.0f ? 1.0f : (x < 0.0f ? -1.0f : 0.0f)))
 UNARY_OP(double, usign_f64, (x > 0.0 ? 1.0 : (x < 0.0 ? -1.0 : 0.0)))
+UNARY_OP(hip_bfloat16, usign_bf16, (hip_bfloat16)((float)x > 0.0f ? 1.0f : ((float)x < 0.0f ? -1.0f : 0.0f)))
 
 UNARY_OP(float, ugelu_f32, (0.5f * x * (1.0f + tanhf(0.7978845608f * (x + 0.044715f * x * x * x)))))
 UNARY_OP(double, ugelu_f64, (0.5 * x * (1.0 + tanh(0.7978845608028654 * (x + 0.044715 * x * x * x)))))
+UNARY_OP(hip_bfloat16, ugelu_bf16, (hip_bfloat16)(0.5f * (float)x * (1.0f + tanhf(0.7978845608f * ((float)x + 0.044715f * (float)x * (float)x * (float)x)))))
 
 UNARY_OP(float, ugelu_erf_f32, (0.5f * x * (1.0f + erff(x * 0.7071067811865475f))))
 UNARY_OP(double, ugelu_erf_f64, (0.5 * x * (1.0 + erf(x * 0.7071067811865475))))
+UNARY_OP(hip_bfloat16, ugelu_erf_bf16, (hip_bfloat16)(0.5f * (float)x * (1.0f + erff((float)x * 0.7071067811865475f))))
 
 UNARY_OP(float, usilu_f32, (x / (1.0f + expf(-x))))
 UNARY_OP(double, usilu_f64, (x / (1.0 + exp(-x))))
+UNARY_OP(hip_bfloat16, usilu_bf16, (hip_bfloat16)((float)x / (1.0f + expf(-(float)x))))
 
 UNARY_OP(float, uerf_f32, erff(x))
 UNARY_OP(double, uerf_f64, erf(x))
+UNARY_OP(hip_bfloat16, uerf_bf16, (hip_bfloat16)(erff((float)x)))
 
 UNARY_OP_SCALAR(float, uelu_f32, (x > 0.0f ? x : scalar * (expf(x) - 1.0f)))
 UNARY_OP_SCALAR(double, uelu_f64, (x > 0.0 ? x : scalar * (exp(x) - 1.0)))
+UNARY_OP_SCALAR(hip_bfloat16, uelu_bf16, (hip_bfloat16)((float)x > 0.0f ? (float)x : (float)scalar * (expf((float)x) - 1.0f)))
 
 UNARY_OP_SCALAR(float, upowf_f32, powf(x, scalar))
 UNARY_OP_SCALAR(double, upowf_f64, pow(x, scalar))
+UNARY_OP_SCALAR(hip_bfloat16, upowf_bf16, (hip_bfloat16)(powf((float)x, (float)scalar)))

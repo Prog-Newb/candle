@@ -6,6 +6,8 @@
 #include <hip/hip_runtime.h>
 #endif
 
+#include <hip/hip_fp16.h>
+#include <hip/hip_bfloat16.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <limits>
@@ -52,6 +54,18 @@ __device__ __forceinline__ uint32_t reduce_init_highest<uint32_t>() {
 template <>
 __device__ __forceinline__ uint8_t reduce_init_highest<uint8_t>() {
     return std::numeric_limits<uint8_t>::max();
+}
+
+// hip_bfloat16: construct from float, since bf16 has no numeric_limits<INFINITY>
+// specialization and the generic -INFINITY/INFINITY return path implicitly casts.
+template <>
+__device__ __forceinline__ hip_bfloat16 reduce_init_lowest<hip_bfloat16>() {
+    return (hip_bfloat16)(-INFINITY);
+}
+
+template <>
+__device__ __forceinline__ hip_bfloat16 reduce_init_highest<hip_bfloat16>() {
+    return (hip_bfloat16)(INFINITY);
 }
 
 __device__ bool is_contiguous(
@@ -104,6 +118,18 @@ __device__ __forceinline__ float ming<float>(float a, float b) { return fminf(a,
 
 template <>
 __device__ __forceinline__ double ming<double>(double a, double b) { return fmin(a, b); }
+
+// bf16 goes through float. The generic template's `a > b ? a : b` relies on
+// hip_bfloat16::operator>, which exists in current ROCm but we don't rely on it.
+template <>
+__device__ __forceinline__ hip_bfloat16 maxg<hip_bfloat16>(hip_bfloat16 a, hip_bfloat16 b) {
+    return (hip_bfloat16)(fmaxf((float)a, (float)b));
+}
+
+template <>
+__device__ __forceinline__ hip_bfloat16 ming<hip_bfloat16>(hip_bfloat16 a, hip_bfloat16 b) {
+    return (hip_bfloat16)(fminf((float)a, (float)b));
+}
 
 __device__ __forceinline__ float expg(float x) { return expf(x); }
 __device__ __forceinline__ double expg(double x) { return exp(x); }
@@ -505,6 +531,7 @@ FAST_OP(double, fast_min_f64, fast_max_f64, fast_argmin_f64, fast_argmax_f64, fa
 FAST_OP(uint32_t, fast_min_u32, fast_max_u32, fast_argmin_u32, fast_argmax_u32, fast_sum_u32)
 FAST_OP(int64_t, fast_min_i64, fast_max_i64, fast_argmin_i64, fast_argmax_i64, fast_sum_i64)
 FAST_OP(uint8_t, fast_min_u8, fast_max_u8, fast_argmin_u8, fast_argmax_u8, fast_sum_u8)
+FAST_OP(hip_bfloat16, fast_min_bf16, fast_max_bf16, fast_argmin_bf16, fast_argmax_bf16, fast_sum_bf16)
 
 // Softmax kernels
 SOFTMAX_OP(float, float, softmax_f32)
@@ -521,6 +548,7 @@ LAYERNORM_OP(double, layernorm_f64)
 // Half-precision types support (HIP uses __half for f16 and hip_bfloat16 for bf16)
 #ifdef __HIPCC__
 #include <hip/hip_fp16.h>
+#include <hip/hip_bfloat16.h>
 
 // F16 helpers
 __device__ __forceinline__ float maxg(__half a, __half b) {
@@ -690,6 +718,133 @@ __device__ void layernorm<__half>(const __half * x, __half * dst, const __half *
 extern "C" __global__ void layernorm_f16(const __half *src, __half *dst, const __half *alpha,
                                          const __half *beta, const int n_cols, const int block_size, const float eps) {
     layernorm<__half>(src, dst, alpha, beta, n_cols, block_size, eps);
+}
+
+// ========================================================================
+// BF16 (hip_bfloat16) kernels — mirror the F16 wrappers but accumulate in
+// float. hip_bfloat16 has float() conversion and a float constructor, so we
+// avoid relying on operator overloads that vary by ROCm version.
+// ========================================================================
+
+extern "C" __global__ void softmax_bf16(const hip_bfloat16 *src, hip_bfloat16 *dst, const int ncols) {
+    const int row = blockDim.x*blockIdx.x + threadIdx.x;
+    const int block_size = blockDim.y;
+    const int tid = threadIdx.y;
+
+    float max_val = -INFINITY;
+    for (int col = tid; col < ncols; col += block_size) {
+        const int i = row*ncols + col;
+        max_val = fmaxf(max_val, (float)src[i]);
+    }
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        max_val = fmaxf(max_val, __shfl_xor(max_val, mask, 32));
+    }
+
+    float tmp = 0.f;
+    for (int col = tid; col < ncols; col += block_size) {
+        const int i = row*ncols + col;
+        const float val = expf((float)src[i] - max_val);
+        tmp += val;
+        dst[i] = (hip_bfloat16)val;
+    }
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        tmp += __shfl_xor(tmp, mask, 32);
+    }
+    const float inv_tmp = 1.f / tmp;
+    for (int col = tid; col < ncols; col += block_size) {
+        const int i = row*ncols + col;
+        dst[i] = (hip_bfloat16)((float)dst[i] * inv_tmp);
+    }
+}
+
+extern "C" __global__ void rmsnorm_bf16(const hip_bfloat16 *src, hip_bfloat16 *dst, const hip_bfloat16 *alpha,
+                                        const int ncols, const int block_size, const float eps) {
+    const int row = blockIdx.x*blockDim.y + threadIdx.y;
+    const int tid = threadIdx.x;
+
+    float tmp = 0.0f;
+    for (int col = tid; col < ncols; col += block_size) {
+        const float xi = (float)src[row*ncols + col];
+        tmp += xi * xi;
+    }
+    tmp = warp_reduce_sum(tmp);
+    if (block_size > WARP_SIZE) {
+        __shared__ float s_sum[32];
+        int warp_id = threadIdx.x / WARP_SIZE;
+        int lane_id = threadIdx.x % WARP_SIZE;
+        if (lane_id == 0) {
+            s_sum[warp_id] = tmp;
+        }
+        __syncthreads();
+        tmp = s_sum[lane_id];
+        tmp = warp_reduce_sum(tmp);
+    }
+    const float mean = tmp / ncols;
+    const float scale = rsqrtf(mean + eps);
+    if (alpha == nullptr) {
+        for (int col = tid; col < ncols; col += block_size) {
+            dst[row*ncols + col] = (hip_bfloat16)(scale * (float)src[row*ncols + col]);
+        }
+    } else {
+        for (int col = tid; col < ncols; col += block_size) {
+            float a = (float)alpha[col];
+            dst[row*ncols + col] = (hip_bfloat16)(scale * (float)src[row*ncols + col] * a);
+        }
+    }
+}
+
+extern "C" __global__ void layernorm_bf16(const hip_bfloat16 *src, hip_bfloat16 *dst, const hip_bfloat16 *alpha,
+                                          const hip_bfloat16 *beta, const int ncols, const int block_size, const float eps) {
+    const int row = blockIdx.x*blockDim.y + threadIdx.y;
+    const int tid = threadIdx.x;
+
+    float2 mean_var = make_float2(0.f, 0.f);
+    for (int col = tid; col < ncols; col += block_size) {
+        const float xi = (float)src[row*ncols + col];
+        mean_var.x += xi;
+        mean_var.y += xi * xi;
+    }
+    mean_var = warp_reduce_sum(mean_var);
+    if (block_size > WARP_SIZE) {
+        __shared__ float2 s_sum[32];
+        int warp_id = threadIdx.x / WARP_SIZE;
+        int lane_id = threadIdx.x % WARP_SIZE;
+        if (lane_id == 0) {
+            s_sum[warp_id] = mean_var;
+        }
+        __syncthreads();
+        mean_var = s_sum[lane_id];
+        mean_var = warp_reduce_sum(mean_var);
+    }
+    const float mean = mean_var.x / ncols;
+    const float var = mean_var.y / ncols - mean * mean;
+    const float inv_std = rsqrtf(var + eps);
+
+    if (alpha == nullptr && beta == nullptr) {
+        for (int col = tid; col < ncols; col += block_size) {
+            float lhs = ((float)src[row*ncols + col] - mean) * inv_std;
+            dst[row*ncols + col] = (hip_bfloat16)lhs;
+        }
+    } else if (alpha == nullptr && beta != nullptr) {
+        for (int col = tid; col < ncols; col += block_size) {
+            float b = (float)beta[col];
+            float lhs = ((float)src[row*ncols + col] - mean) * inv_std;
+            dst[row*ncols + col] = (hip_bfloat16)(lhs + b);
+        }
+    } else if (alpha != nullptr && beta == nullptr) {
+        for (int col = tid; col < ncols; col += block_size) {
+            float a = (float)alpha[col];
+            float lhs = ((float)src[row*ncols + col] - mean) * inv_std;
+            dst[row*ncols + col] = (hip_bfloat16)(lhs * a);
+        }
+    } else {
+        for (int col = tid; col < ncols; col += block_size) {
+            float a = (float)alpha[col];
+            float b = (float)beta[col];
+            float lhs = ((float)src[row*ncols + col] - mean) * inv_std;
+            dst[row*ncols + col] = (hip_bfloat16)(lhs * a + b);
+        }
+    }
 }
 
 #endif // __HIPCC__
