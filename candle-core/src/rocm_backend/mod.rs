@@ -1639,6 +1639,20 @@ impl BackendStorage for RocmStorage {
         let miopen_handle = device.miopen();
         let dst_el = params.b_size * params.c_out * params.l_out();
 
+        // ROCM_CONV_DEBUG=1: see the conv2d note above. conv1d maps to the 2D MIOpen call with
+        // height = 1, so the same naive-kernel selection applies.
+        if std::env::var_os("ROCM_CONV_DEBUG").is_some() {
+            eprintln!(
+                "[rocm-conv1d] dtype={:?} in=({},{},1,{}) kernel=({},{},1,{}) out=(1,{}) \
+                 stride={} pad={} dilation={}",
+                self.dtype(),
+                params.b_size, params.c_in, params.l_in,
+                params.c_out, params.c_in, params.k_size,
+                params.l_out(),
+                params.stride, params.padding, params.dilation,
+            );
+        }
+
         dispatch_miopen_conv!(
             self,
             kernel,
@@ -1741,6 +1755,22 @@ impl BackendStorage for RocmStorage {
         let out_h = params.out_h();
         let out_w = params.out_w();
         let dst_el = params.b_size * params.c_out * out_h * out_w;
+
+        // ROCM_CONV_DEBUG=1 logs every conv2d problem descriptor to stderr before the MIOpen call.
+        // Added to locate the shape that MIOpen routes to `naive_conv_..._half_double_half`, which
+        // hangs gfx1100 (f64 accumulate). The log line prints BEFORE the GPU call, so even if that
+        // call hangs the offending shape is already on disk. See amd/HANDOFF.md (video conv hang).
+        if std::env::var_os("ROCM_CONV_DEBUG").is_some() {
+            eprintln!(
+                "[rocm-conv2d] dtype={:?} in=({},{},{},{}) kernel=({},{},{},{}) out=({},{}) \
+                 stride={} pad={} dilation={}",
+                self.dtype(),
+                params.b_size, params.c_in, params.i_h, params.i_w,
+                params.c_out, params.c_in, params.k_h, params.k_w,
+                out_h, out_w,
+                params.stride, params.padding, params.dilation,
+            );
+        }
 
         dispatch_miopen_conv!(
             x_store,
