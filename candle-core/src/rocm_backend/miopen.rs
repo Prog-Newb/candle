@@ -1,56 +1,5 @@
 use rocm_rs::miopen::tensor::{DataType, TensorDescriptor};
 use rocm_rs::miopen::{ConvolutionDescriptor, Handle};
-use std::collections::HashMap;
-use std::sync::Mutex;
-
-/// Everything that determines which forward convolution algorithm MIOpen should pick.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct ConvKey {
-    dtype: u32,
-    b: usize,
-    c_in: usize,
-    c_out: usize,
-    i_h: usize,
-    i_w: usize,
-    k_h: usize,
-    k_w: usize,
-    pad_h: usize,
-    pad_w: usize,
-    stride_h: usize,
-    stride_w: usize,
-    dilation_h: usize,
-    dilation_w: usize,
-}
-
-/// The chosen forward algorithm, per convolution configuration.
-///
-/// `miopenFindConvolutionForwardAlgorithm` is a **search**: it benchmarks candidate kernels by
-/// actually running them. It is meant to be called once per configuration with the caller keeping
-/// the answer. Calling it on every forward made the search, not the convolution, the dominant
-/// cost — the SeedVR2 VAE decode was running 3x3 128->128 convolutions at roughly 2% of this
-/// card's fp16 peak.
-///
-/// MIOpen's own find-db (`~/.miopen/db/*.ufdb.txt`) makes a repeat search cheaper than a cold one,
-/// which is why a warm run was already ~30x faster than a cold one. But "cheaper than
-/// benchmarking every candidate" is still vastly more than "already know the answer".
-///
-/// Keyed by shape rather than by pointer, so it is valid across tiles, frames and tensors: the
-/// algorithm MIOpen picks depends only on the convolution's geometry and dtype.
-static ALGO_CACHE: Mutex<Option<HashMap<ConvKey, i32>>> = Mutex::new(None);
-
-fn cached_algo(key: &ConvKey) -> Option<i32> {
-    ALGO_CACHE
-        .lock()
-        .ok()?
-        .as_ref()
-        .and_then(|m| m.get(key).copied())
-}
-
-fn store_algo(key: ConvKey, algo: i32) {
-    if let Ok(mut guard) = ALGO_CACHE.lock() {
-        guard.get_or_insert_with(HashMap::new).insert(key, algo);
-    }
-}
 
 /// Note the bf16-before-f16 order: `half::bf16`'s type name *contains* "f16", so testing "f16"
 /// first matched bf16 as well and the `MiopenBFloat16` arm was unreachable — every bf16
@@ -68,23 +17,6 @@ pub fn miopen_dtype<T: Copy>() -> DataType {
         DataType::MiopenHalf
     } else {
         panic!("Unsupported dtype for MIOpen: {name}")
-    }
-}
-
-/// Stable small discriminant for [`ConvKey`], mirroring [`miopen_dtype`]'s matching (including its
-/// bf16-before-f16 order) without depending on `DataType` being castable to an integer.
-fn dtype_key<T: Copy>() -> u32 {
-    let name = std::any::type_name::<T>();
-    if name.contains("f32") {
-        0
-    } else if name.contains("f64") {
-        1
-    } else if name.contains("bf16") {
-        2
-    } else if name.contains("f16") {
-        3
-    } else {
-        4
     }
 }
 
@@ -172,67 +104,54 @@ pub fn conv2d_forward<T: Copy>(
         .map(|w| w.as_ptr() as *mut std::ffi::c_void)
         .unwrap_or(std::ptr::null_mut());
 
-    // Search for the best algorithm only the first time we see this configuration; afterwards reuse
-    // what it found. See `ALGO_CACHE` — the search is the expensive part, not the convolution.
-    let key = ConvKey {
-        dtype: dtype_key::<T>(),
-        b,
-        c_in,
-        c_out,
-        i_h,
-        i_w,
-        k_h,
-        k_w,
-        pad_h,
-        pad_w,
-        stride_h,
-        stride_w,
-        dilation_h,
-        dilation_w,
-    };
 
     unsafe {
-        let algo = match cached_algo(&key) {
-            Some(algo) => algo,
-            None => {
-                let (_, perf_results) =
-                    rocm_rs::miopen::convolution::find_convolution_forward_algorithm(
-                        handle,
-                        &x_desc,
-                        x_ptr,
-                        &w_desc,
-                        w_ptr,
-                        &conv_desc,
-                        &y_desc,
-                        y_ptr,
-                        1,
-                        workspace_ptr,
-                        workspace_size,
-                        false,
-                    )
-                    .map_err(|e| {
-                        crate::Error::Msg(format!(
-                            "MIOpen find_convolution_forward_algorithm failed: {}",
-                            e
-                        ))
-                    })?;
+        // Find on EVERY call. Caching the algorithm id and skipping the search looks like an easy
+        // win - the search benchmarks candidate kernels - but it does not work: MIOpen's
+        // convolution_forward needs Find to have registered an *invoker* for this problem on this
+        // handle, and the algorithm id alone does not carry one. MIOpen evicts invokers, so a cached
+        // algo survives for a while and then fails mid-job with
+        //
+        //     convolutionocl.cpp:835: No invoker was registered for convolution forward.
+        //                             Was find executed?
+        //
+        // Caught by a 68-frame video run; a 47-frame one (94 tiles) had passed. If this is worth
+        // revisiting, the supported route is immediate mode (miopenConvolutionForwardGetSolution +
+        // miopenConvolutionForwardImmediate), which is designed to run without a prior Find - it
+        // needs rocm_rs to expose those entry points.
+        let (_, perf_results) = rocm_rs::miopen::convolution::find_convolution_forward_algorithm(
+            handle,
+            &x_desc,
+            x_ptr,
+            &w_desc,
+            w_ptr,
+            &conv_desc,
+            &y_desc,
+            y_ptr,
+            1,
+            workspace_ptr,
+            workspace_size,
+            false,
+        )
+        .map_err(|e| {
+            crate::Error::Msg(format!(
+                "MIOpen find_convolution_forward_algorithm failed: {}",
+                e
+            ))
+        })?;
 
-                let algo = perf_results
-                    .first()
-                    .map(|p| p.__bindgen_anon_1.fwd_algo)
-                    .unwrap_or(4);
-                if std::env::var("CANDLE_ROCM_CONV_LOG").is_ok() {
-                    // One line per distinct convolution configuration, printed on the cache miss.
-                    eprintln!(
-                        "[rocm-conv] in {}x{}x{}x{} k{}x{} -> {}ch pad{} stride{} | algo={} workspace={:.1}MB",
-                        b, c_in, i_h, i_w, k_h, k_w, c_out, pad_h, stride_h, algo,
-                        workspace_size as f64 / (1024.0 * 1024.0)
-                    );
-                }
-                store_algo(key, algo);
-                algo
-            }
-        };
+        let algo = perf_results
+            .first()
+            .map(|p| p.__bindgen_anon_1.fwd_algo)
+            .unwrap_or(4);
+
+        if std::env::var("CANDLE_ROCM_CONV_LOG").is_ok() {
+            eprintln!(
+                "[rocm-conv] in {}x{}x{}x{} k{}x{} -> {}ch pad{} stride{} | algo={} workspace={:.1}MB",
+                b, c_in, i_h, i_w, k_h, k_w, c_out, pad_h, stride_h, algo,
+                workspace_size as f64 / (1024.0 * 1024.0)
+            );
+        }
 
         rocm_rs::miopen::convolution::convolution_forward(
             handle,
